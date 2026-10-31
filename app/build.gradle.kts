@@ -11,8 +11,8 @@ android {
         applicationId = "com.anarbastanov.adskipper"
         minSdk = 25
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.2.0"
+        versionCode = 5
+        versionName = "1.3.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

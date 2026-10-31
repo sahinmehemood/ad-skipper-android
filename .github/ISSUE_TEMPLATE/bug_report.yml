@@ -1,0 +1,54 @@
+name: Bug report
+description: Report an Ad Skipper issue with reproducible details.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include passwords, account identifiers, unredacted screenshots or unredacted accessibility logs.
+  - type: input
+    id: device
+    attributes:
+      label: Device and model
+      placeholder: OnePlus model
+    validations:
+      required: true
+  - type: input
+    id: android
+    attributes:
+      label: Android version and build
+    validations:
+      required: true
+  - type: input
+    id: youtube
+    attributes:
+      label: YouTube app version
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Playback mode
+      options:
+        - Fullscreen
+        - Miniplayer
+        - Picture-in-picture
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include expected and actual behaviour.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted AdSkipper logs
+      description: Remove visible YouTube content and personal data before sharing.
+    validations:
+      required: false

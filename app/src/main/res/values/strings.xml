@@ -2,12 +2,12 @@
     <string name="app_name">Ad Skipper</string>
 
     <string name="app_description">
-        Skips YouTube ads automatically by pressing the Skip button for you.
+        Skips YouTube ads and dismisses supported in-player Sponsored cards automatically.
     </string>
 
     <string name="permission_needed_title">Enable Accessibility Service</string>
     <string name="permission_needed_message">
-        To skip ads automatically, enable Ad Skipper in Accessibility settings.
+        To skip ads and dismiss supported in-player Sponsored cards automatically, enable Ad Skipper in Accessibility settings.
         You can turn it off at any time.
     </string>
 
