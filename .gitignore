@@ -1,5 +1,7 @@
 # Built application files
 /*/build/
+/build/
+.kotlin/
 
 # Crashlytics configuations
 com_crashlytics_export_strings.xml
@@ -10,12 +12,21 @@ local.properties
 # Gradle generated files
 .gradle/
 
-# Signing files
+# Signing files and credentials
 .signing/
+*.jks
+*.keystore
+*.p12
+*.pfx
 
 # User-specific configurations
 .idea/
 *.iml
+
+# Local Android build outputs
+*.apk
+*.aab
+captures/
 
 # OS-specific files
 .DS_Store

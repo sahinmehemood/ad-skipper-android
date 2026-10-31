@@ -2,11 +2,12 @@
 <accessibility-service
     xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/app_description"
-    android:accessibilityEventTypes="typeWindowContentChanged"
+    android:accessibilityEventTypes="typeWindowContentChanged|typeWindowStateChanged|typeWindowsChanged|typeViewClicked"
     android:packageNames="com.google.android.youtube"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:notificationTimeout="250"
+    android:notificationTimeout="50"
     android:canRetrieveWindowContent="true"
+    android:canPerformGestures="true"
     android:canRequestTouchExplorationMode="false"
     android:canRequestFilterKeyEvents="false"
-    android:accessibilityFlags="flagReportViewIds" />
+    android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows" />

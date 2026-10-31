@@ -1,71 +1,109 @@
 # Ad Skipper
 
-Ad Skipper is a lightweight helper for **YouTube**. When a skippable ad appears, it automatically presses the skip button as soon as it becomes available (typically after about five seconds), then continues running quietly in the background.
+A small Android accessibility helper for the official YouTube app. It automatically activates YouTube's **Skip Ad** control and can remove the small in-player **Sponsored** card after the ad returns to normal playback.
 
-> [!CAUTION]
-> **Sensitive apps (banking, finance, enterprise)**
->
-> Some apps that handle sensitive information may refuse to open or function while system assistance features are active. This is a security measure implemented by those apps.
->
-> If you encounter this, temporarily **disable Ad Skipper** in settings before using those apps. **Turn it back on** afterwards to continue skipping ads.
+## What it does
+
+- Watches only `com.google.android.youtube`.
+- Activates the recognised Skip Ad control.
+- Finds the exact Sponsored label and its own options control.
+- Opens that menu and searches YouTube-owned windows for an exact dismissal action.
+- Verifies that the in-player card disappeared after the dismissal input.
+- Ignores likely Sponsored feed tiles using a positive full-tile description; a scrollable ancestor alone does not exclude a mini-player.
+
+This is a post-display UI dismissal, not an ad blocker. It does not prevent an ad or card from loading. YouTube can change its interface, labels and accessibility tree, so compatibility is not guaranteed across every YouTube version, account or playback mode.
 
 ## Requirements
 
-- Android 8.1 (API level 27) or newer
-- Official YouTube app installed (`com.google.android.youtube`)
-- Accessibility permission in system settings
+- Android 7.1 (API 25) or newer.
+- The official YouTube app (`com.google.android.youtube`).
+- Ad Skipper enabled in Android Accessibility settings.
 
-## Installation
+## Install
 
-1. **Download** the latest APK from [GitHub Releases](https://github.com/anar-bastanov/ad-skipper-android/releases/latest), or build the app with Android Studio.
+1. Download the debug APK from the successful [GitHub Actions run](https://github.com/sahinmehemood/ad-skipper-android/actions).
+2. Extract the artifact ZIP and install the APK.
+3. Open Ad Skipper and tap **Open Settings**.
+4. Enable Ad Skipper under **Accessibility**.
+5. Return to YouTube.
 
-2. **Install** the APK on your device, and enable **Install unknown apps** if prompted.
+**Updating from an earlier CI debug build:** GitHub runners generate temporary debug-signing keys. Different runs can produce APKs with different signing certificates, so Android may reject an in-place update. Uninstall the earlier Ad Skipper build first, install the new APK, then enable the Accessibility service again. No app account or user content is stored by Ad Skipper. See [Signing](docs/SIGNING.md).
 
-3. Launch the app and choose **Open Settings**.
+On Android 13 and newer, Android may require **Allow restricted settings** for sideloaded apps: `Settings → Apps → Ad Skipper → ⋮ → Allow restricted settings`. Manufacturer menus vary.
 
-4. In system settings, locate Ad Skipper under **Accessibility** and **turn it on**.
+## Build and validate
 
-5. **Enjoy YouTube** as usual. Skippable ads will be dismissed automatically.
+Requirements: JDK 17 and Android SDK 35.
 
-If you encounter warnings or setup issues, **read below**.
+```sh
+./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug
+```
 
-## Troubleshooting
+The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 
-Ad Skipper is **open source**, so you can inspect the code yourself. The app runs **entirely on your device** and does not require internet access. It does not collect, store, or transmit any personal data. It does exactly what is described and nothing more.
+GitHub Actions runs the same unit tests, Android lint and debug build for pull requests. The workflow uploads a short-lived debug APK artifact. The accessibility interaction still needs testing against the live YouTube UI; unit tests cannot reproduce YouTube's changing accessibility hierarchy.
 
-> [!WARNING]
-> **Google Play Protect alerts**
->
-> Because Ad Skipper uses this system permission to detect and press the Skip Ad button, **Play Protect** may show a warning such as "This app may be harmful". This is a generic warning shown to any app with this type of permission.
->
-> If Play Protect blocks installation, you can safely choose **Install anyway** once you have verified you downloaded it from the official [GitHub Releases](https://github.com/ad-skipper-android/youtube-ad-skipper/releases/latest).
->
-> In rare cases Play Protect may continue to **block or remove** the app. You can temporarily **pause Play Protect scanning** in the Play Store (`Profile > Play Protect > Settings`), complete installation, and then **re-enable Play Protect** immediately afterwards.
+## Debugging a failed dismissal
 
-> [!WARNING]
-> **Restricted Settings on Android 13+**
->
-> On Android 13 and newer, Google blocks Accessibility for apps installed outside the Play Store. If you see **"App was denied access | Controlled by Restricted Setting"**, follow these steps:
->
-> 1. Open `Settings > Apps > Ad Skipper`.
->
-> 2. Tap the **three-dot menu** in the top-right corner.
->
-> 3. Select **Allow restricted settings**.
->
-> 4. If you don't see this option:
->
->    - Enable **Developer options**: go to `Settings > About phone` and tap **Build number** seven times.
->
->    - Enter your **PIN**, then repeat the steps above.
->
->    - If the option still doesn't appear, try **opening Ad Skipper once**, then check again.
->
->    - On some phones, you may need to **reinstall the app** after enabling Developer options.
+Connect the phone to a computer with Android Debug Bridge (ADB), then enable detailed logs:
 
-After this one-time setup, Ad Skipper will work normally in the background.
+```sh
+adb shell setprop log.tag.AdSkipper DEBUG
+adb logcat -c
+```
+
+Reproduce the issue once and capture the logs:
+
+```sh
+adb logcat -d -s AdSkipper:D > ad-skipper.log
+```
+
+Disable detailed logs afterwards:
+
+```sh
+adb shell setprop log.tag.AdSkipper INFO
+```
+
+**Privacy:** DEBUG mode can log visible YouTube accessibility text, descriptions, view IDs and screen bounds. Review the file and remove personal information before sharing it. Normal INFO logging does not emit menu snapshots.
+
+## Security and privacy
+
+- The accessibility service is restricted to the official YouTube package in both XML metadata and runtime configuration.
+- The app does not declare the `INTERNET` permission.
+- No account, password, API key or signing secret is required.
+- The implementation uses bounded tree traversals, exact text matching, scoped click targets and retry limits.
+- Accessibility access is powerful. Review the source before enabling the service.
+
+Report a security concern privately through GitHub rather than publishing sensitive details in an issue. See [SECURITY.md](SECURITY.md).
+
+## Project structure
+
+```text
+app/
+  src/main/
+    java/com/anarbastanov/adskipper/
+      ClickerAccessibilityService.kt
+      SponsoredOverlayDismisser.kt
+      SponsoredOverlayRules.kt
+      PollingPolicy.kt
+    res/
+      values/
+      xml/
+  src/test/
+    java/com/anarbastanov/adskipper/
+      SponsoredOverlayRulesTest.kt
+      PollingPolicyTest.kt
+docs/
+  ARCHITECTURE.md
+  VALIDATION.md
+```
+
+See [Architecture](docs/ARCHITECTURE.md), [Validation matrix](docs/VALIDATION.md), [Signing](docs/SIGNING.md) and [Contributing](CONTRIBUTING.md).
+
+## Acknowledgements
+
+The conservative two-step overlay-dismissal approach was informed by [Javid-Git/ad-skipper](https://github.com/Javid-Git/ad-skipper), which is MIT-licensed.
 
 ## License
 
-Copyright &copy; 2025 Anar Bastanov  
-Distributed under the [MIT License](http://www.opensource.org/licenses/mit-license.php).
+MIT. See [LICENSE](LICENSE).

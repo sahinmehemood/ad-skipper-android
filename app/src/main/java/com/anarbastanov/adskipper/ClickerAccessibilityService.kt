@@ -5,128 +5,166 @@ import android.accessibilityservice.AccessibilityServiceInfo
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
 import android.graphics.Rect
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
+import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 
+/**
+ * Watches only the official YouTube package for its Skip Ad control and the
+ * in-player Sponsored overlay. Accessibility events wake the monitor quickly;
+ * a bounded polling loop also covers menu animations that emit no follow-up
+ * accessibility event.
+ */
 class ClickerAccessibilityService : AccessibilityService() {
 
-    private val targetPackage = "com.google.android.youtube"
+    companion object {
+        private const val TAG = "AdSkipper"
+        private const val TARGET_PACKAGE = "com.google.android.youtube"
+        private const val SCAN_COOLDOWN_MS = 150L
+        private const val SKIP_CLICK_DEBOUNCE_MS = 3_000L
+    }
 
-    private val targetViewId = "$targetPackage:id/skip_ad_button"
-
-    private var lastScanAt = 0L
-    private val scanCooldownMs = 200L
-    private var lastClickAt = 0L
-    private val clickDebounceMs = 3000L
-
-//    private val targetViewIds = arrayOf(
-//        "$targetPackage:id/skip_ad_button"
-//    )
-
-//    private val targetTexts = arrayOf(
-//        "Dismiss",
-//        "SKIP TRIAL",
-//        "No thanks",
-//        "Don't renew"
-//    )
-
-//    private val targetContentDescriptions = arrayOf(
-//        "Close ad panel",
-//        "Dismiss"
-//    )
+    private val targetViewId = "${TARGET_PACKAGE}:id/skip_ad_button"
+    private val handler = Handler(Looper.getMainLooper())
 
     private val tmpRect = Rect()
     private val tapPath = Path()
 
+    private var lastScanAt = 0L
+    private var lastSkipClickAt = 0L
+    private var pollScheduled = false
+    private var sponsoredOverlayDismisser: SponsoredOverlayDismisser? = null
+
     override fun onServiceConnected() {
+        super.onServiceConnected()
+        sponsoredOverlayDismisser = SponsoredOverlayDismisser(this)
+
         serviceInfo = AccessibilityServiceInfo().apply {
-            eventTypes = AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+            eventTypes = AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
+                AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
+                AccessibilityEvent.TYPE_WINDOWS_CHANGED or
+                AccessibilityEvent.TYPE_VIEW_CLICKED
             feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
-            notificationTimeout = 250
-            flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
-            packageNames = arrayOf(targetPackage)
+            notificationTimeout = 50
+            flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
+                AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+            packageNames = arrayOf(TARGET_PACKAGE)
         }
+
+        schedulePoll(0L)
+        Log.i(TAG, "Accessibility service connected.")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event?.packageName != targetPackage) return
-
-        val types = event.contentChangeTypes
-        if (types != 0 &&
-            (types and (AccessibilityEvent.CONTENT_CHANGE_TYPE_SUBTREE
-//                    or AccessibilityEvent.CONTENT_CHANGE_TYPE_TEXT
-//                    or AccessibilityEvent.CONTENT_CHANGE_TYPE_CONTENT_DESCRIPTION
-            )) == 0) {
-            return
-        }
-
-//        val root: AccessibilityNodeInfo = event.source ?: rootInActiveWindow ?: return
-
-        val now = android.os.SystemClock.uptimeMillis()
-        if (now - lastClickAt < clickDebounceMs) return
-        if (now - lastScanAt < scanCooldownMs) return
-        lastScanAt = now
-
-        val root = rootInActiveWindow ?: return
-        try {
-            val nodes = root.findAccessibilityNodeInfosByViewId(targetViewId)
-            if (!nodes.isNullOrEmpty() && clickNodeOrParent(nodes[0])) {
-                lastClickAt = now
-            }
-        }
-        catch (_: RuntimeException) {}
-
-//        for (id in targetViewIds) {
-//            val nodes = try { root.findAccessibilityNodeInfosByViewId(id) ?: emptyList() }
-//            catch (_: RuntimeException) { emptyList() }
-//
-//            for (n in nodes) {
-//                if (clickNodeOrParent(n)) return
-//            }
-//        }
-
-//        for (t in targetTexts) {
-//            val nodes = root.findAccessibilityNodeInfosByText(t) ?: emptyList()
-//
-//            for (n in nodes) {
-//                if (TextUtils.equals(n.text, t) && clickNodeOrParent(n)) return
-//            }
-//        }
-
-//        for (d in targetContentDescriptions) {
-//            val nodes = root.findAccessibilityNodeInfosByText(d) ?: emptyList()
-//
-//            for (n in nodes) {
-//                if (TextUtils.equals(n.contentDescription, d) && clickNodeOrParent(n)) return
-//            }
-//        }
+        if (event?.packageName?.toString() != TARGET_PACKAGE) return
+        // Poll on the main thread and coalesce bursts of accessibility events.
+        schedulePoll(0L)
     }
 
-    override fun onInterrupt() {}
+    private fun schedulePoll(delayMs: Long) {
+        if (pollScheduled) {
+            if (delayMs != 0L) return
+            handler.removeCallbacks(pollRunnable)
+        }
+        pollScheduled = true
+        handler.postDelayed(pollRunnable, delayMs)
+    }
+
+    private val pollRunnable = object : Runnable {
+        override fun run() {
+            pollScheduled = false
+            val now = SystemClock.uptimeMillis()
+            val dismisser = sponsoredOverlayDismisser
+            var activePackage: String? = null
+
+            try {
+                // tick() searches YouTube's readable windows, including a menu
+                // window that may not be the active window during animation.
+                dismisser?.tick(now)
+
+                val root = rootInActiveWindow
+                activePackage = root?.packageName?.toString()
+                if (root != null && activePackage == TARGET_PACKAGE) {
+                    if (now - lastScanAt >= SCAN_COOLDOWN_MS) {
+                        lastScanAt = now
+                        dismisser?.scan(root, now)
+                        scanSkipButton(root, now)
+                    }
+                }
+            } catch (error: RuntimeException) {
+                // A YouTube transition can detach a node between any two reads.
+                Log.d(TAG, "Ignoring an unstable accessibility tree.", error)
+            } finally {
+                // While YouTube is foregrounded, monitor menu changes frequently.
+                // Otherwise keep a low-rate check so a menu opened moments before
+                // a focus transition still gets resolved.
+                val nextDelay = PollingPolicy.nextDelay(
+                    menuPending = dismisser?.hasPendingMenu() == true,
+                    verificationPending = dismisser?.hasPendingVerification() == true,
+                    youtubeForeground = activePackage == TARGET_PACKAGE
+                )
+                schedulePoll(nextDelay)
+            }
+        }
+    }
+
+    private fun scanSkipButton(root: AccessibilityNodeInfo, now: Long) {
+        if (now - lastSkipClickAt < SKIP_CLICK_DEBOUNCE_MS) return
+
+        val nodes = root.findAccessibilityNodeInfosByViewId(targetViewId).orEmpty()
+        val target = nodes.firstOrNull { it.isVisibleToUser && it.isEnabled } ?: return
+
+        if (clickNodeOrParent(target)) {
+            lastSkipClickAt = now
+            Log.i(TAG, "Clicked YouTube's Skip Ad control.")
+        }
+    }
+
+    override fun onInterrupt() {
+        // Android may interrupt feedback without unbinding the service.
+        // Keep monitoring; teardown belongs in onUnbind/onDestroy.
+    }
+
+    override fun onUnbind(intent: android.content.Intent?): Boolean {
+        shutDown()
+        return super.onUnbind(intent)
+    }
+
+    override fun onDestroy() {
+        shutDown()
+        super.onDestroy()
+    }
+
+    private fun shutDown() {
+        handler.removeCallbacks(pollRunnable)
+        pollScheduled = false
+        sponsoredOverlayDismisser?.reset()
+        sponsoredOverlayDismisser = null
+    }
 
     private fun clickNodeOrParent(node: AccessibilityNodeInfo): Boolean {
-        var cur = node
+        var current: AccessibilityNodeInfo? = node
         var hops = 0
 
-        while (true) {
-            if (cur.isVisibleToUser && cur.isEnabled && cur.isClickable) {
-                if (cur.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+        while (current != null && hops < 6) {
+            if (current.isVisibleToUser && current.isEnabled && current.isClickable &&
+                current.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                return true
             }
-
-            if (++hops == 6) break
-            cur = cur.parent ?: break
+            current = current.parent
+            hops++
         }
 
         node.getBoundsInScreen(tmpRect)
+        if (tmpRect.isEmpty || tmpRect.centerX() < 0 || tmpRect.centerY() < 0) return false
 
-        if (!tmpRect.isEmpty) {
-            tapPath.rewind()
-            tapPath.moveTo(tmpRect.exactCenterX(), tmpRect.exactCenterY())
-            val stroke = GestureDescription.StrokeDescription(tapPath, 0, 10)
-            val gesture = GestureDescription.Builder().addStroke(stroke).build()
-            return dispatchGesture(gesture, null, null)
-        }
-
-        return false
+        tapPath.rewind()
+        tapPath.moveTo(tmpRect.exactCenterX(), tmpRect.exactCenterY())
+        val stroke = GestureDescription.StrokeDescription(tapPath, 0, 80)
+        val gesture = GestureDescription.Builder().addStroke(stroke).build()
+        return dispatchGesture(gesture, null, null)
     }
 }
